@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>讀書番茄鐘</title>
+<style>
+  :root {
+    --bg: #f6f4f1;
+    --card: #ffffff;
+    --text: #2b2b2b;
+    --muted: #7a7a7a;
+    --border: #e4e0da;
+    --focus: #d9534f;
+    --short: #3a9d6e;
+    --long: #3b7dd8;
+    --accent: var(--focus);
+    --deleted: #a0a4ab;
+    --input: #ffffff;
+    --radius: 14px;
+    color-scheme: light;
+  }
+  /* 深色模式:只要改寫變數,所有用到變數的地方會一起換色。
+     規則一:使用者選「自動」(沒有 data-theme)且系統是深色 → 深色
+     規則二:使用者明確選了深色 → 深色 */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1b1c1f; --card: #26282c; --text: #e8e6e3; --muted: #9a9a9a;
+      --border: #3a3d42; --input: #1f2124; --deleted: #6b6f76;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1b1c1f; --card: #26282c; --text: #e8e6e3; --muted: #9a9a9a;
+    --border: #3a3d42; --input: #1f2124; --deleted: #6b6f76;
+    color-scheme: dark;
+  }
+  body[data-mode="short"] { --accent: var(--short); }
+  body[data-mode="long"]  { --accent: var(--long); }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    transition: background .4s;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 24px;
+    background: var(--accent);
+    color: #fff;
+    transition: background .4s;
+  }
+  header h1 { margin: 0; font-size: 1.25rem; letter-spacing: .05em; }
+  button { font: inherit; cursor: pointer; }
+  button:disabled { cursor: not-allowed; opacity: .45; }
+  .icon-btn {
+    background: rgba(255,255,255,.2); color: #fff; border: none;
+    padding: 6px 12px; border-radius: 8px;
+  }
+  .icon-btn:hover { background: rgba(255,255,255,.32); }
+
+  main {
+    display: grid;
+    grid-template-columns: minmax(320px, 420px) 1fr;
+    gap: 20px;
+    max-width: 1100px;
+    margin: 24px auto;
+    padding: 0 16px;
+  }
+  @media (max-width: 760px) {
+    main { grid-template-columns: 1fr; }
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+  }
+  .card + .card { margin-top: 20px; }
+  .card h2 { margin: 0 0 14px; font-size: 1.05rem; }
+
+  /* ---- 計時器 ---- */
+  .mode-tabs { display: flex; gap: 6px; justify-content: center; margin-bottom: 16px; }
+  .mode-tabs button {
+    border: 1px solid var(--border); background: transparent; color: var(--muted);
+    padding: 6px 14px; border-radius: 999px;
+  }
+  .mode-tabs button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  .ring-wrap { position: relative; width: 240px; height: 240px; margin: 0 auto; }
+  .ring-wrap svg { transform: rotate(-90deg); }
+  .ring-bg { stroke: var(--border); }
+  .ring-fg { stroke: var(--accent); transition: stroke-dashoffset .25s linear, stroke .4s; }
+  .time {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  .time .digits { font-size: 3.4rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .time .label { color: var(--muted); font-size: .9rem; }
+
+  .cycle-dots { display: flex; gap: 8px; justify-content: center; margin: 14px 0 4px; }
+  .cycle-dots span {
+    width: 10px; height: 10px; border-radius: 50%;
+    border: 2px solid var(--focus);
+  }
+  .cycle-dots span.done { background: var(--focus); }
+
+  .subject-pick { display: flex; gap: 8px; align-items: center; justify-content: center; margin: 14px 0; }
+  select, input[type="text"], input[type="number"] {
+    font: inherit; padding: 6px 10px;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--input); color: var(--text);
+  }
+  .controls { display: flex; gap: 10px; justify-content: center; }
+  .controls button {
+    border: none; border-radius: 10px; padding: 10px 20px;
+    background: var(--border); color: var(--text);
+  }
+  .controls .primary { background: var(--accent); color: #fff; min-width: 96px; }
+  .hint { text-align: center; color: var(--muted); font-size: .85rem; min-height: 1.3em; margin: 10px 0 0; }
+
+  /* ---- 科目管理 ---- */
+  .subject-list { list-style: none; padding: 0; margin: 0 0 12px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .subject-list li {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 6px 4px 10px; border: 1px solid var(--border); border-radius: 999px;
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+  .subject-list button {
+    border: none; background: none; color: var(--muted); font-size: 1rem; line-height: 1; padding: 2px 4px;
+  }
+  .subject-list button:hover { color: var(--focus); }
+  .add-form { display: flex; gap: 8px; }
+  .add-form input[type="text"] { flex: 1; min-width: 0; }
+  .add-form input[type="color"] { width: 40px; height: 36px; border: 1px solid var(--border); border-radius: 8px; padding: 2px; background: var(--input); }
+  .add-form button { border: none; border-radius: 8px; padding: 6px 14px; background: var(--text); color: var(--card); }
+  .error { color: var(--focus); font-size: .85rem; min-height: 1.2em; margin: 6px 0 0; }
+  .empty { color: var(--muted); font-size: .9rem; }
+
+  /* ---- 統計 ---- */
+  .today-total { font-size: 2rem; font-weight: 600; margin-bottom: 10px; }
+  .today-total small { font-size: .9rem; color: var(--muted); font-weight: normal; }
+  .hbar-row { display: grid; grid-template-columns: 110px 1fr 80px; gap: 10px; align-items: center; margin: 6px 0; font-size: .9rem; }
+  .hbar-row .name { display: flex; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .hbar-track { height: 10px; background: var(--bg); border-radius: 5px; overflow: hidden; }
+  .hbar-fill { height: 100%; border-radius: 5px; }
+  .hbar-row .val { text-align: right; color: var(--muted); }
+
+  .week-chart { display: flex; align-items: flex-end; gap: 10px; height: 220px; padding-top: 20px; }
+  .week-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; }
+  .week-col .total { font-size: .75rem; color: var(--muted); height: 18px; }
+  .week-col .bar-area { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; }
+  .week-col .stack { width: 70%; max-width: 44px; display: flex; flex-direction: column-reverse; border-radius: 6px 6px 0 0; overflow: hidden; }
+  .week-col .seg { width: 100%; }
+  .week-col .day { font-size: .78rem; margin-top: 6px; text-align: center; color: var(--muted); }
+  .week-col.today .day { color: var(--text); font-weight: 600; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; font-size: .85rem; color: var(--muted); }
+  .legend span { display: flex; align-items: center; gap: 5px; }
+
+  /* ---- 紀錄列表 ---- */
+  .record-list { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; }
+  .record-list li {
+    display: grid; grid-template-columns: 90px 1fr 64px 28px; gap: 8px; align-items: center;
+    padding: 7px 4px; border-bottom: 1px solid var(--border); font-size: .9rem;
+  }
+  .record-list li:last-child { border-bottom: none; }
+  .record-list .when { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .record-list .name { display: flex; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .record-list .mins { text-align: right; }
+  .record-list button { border: none; background: none; color: var(--muted); font-size: 1rem; padding: 2px; }
+  .record-list button:hover { color: var(--focus); }
+  .header-actions { display: flex; gap: 8px; }
+
+  /* ---- 設定視窗 ---- */
+  dialog { border: none; border-radius: var(--radius); background: var(--card); color: var(--text); padding: 24px; width: min(360px, calc(100% - 32px)); }
+  dialog::backdrop { background: rgba(0,0,0,.35); }
+  dialog h2 { margin-top: 0; }
+  .setting-row { display: flex; justify-content: space-between; align-items: center; margin: 12px 0; }
+  .setting-row input { width: 80px; }
+  .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  .dialog-actions button { border: none; border-radius: 8px; padding: 8px 16px; background: var(--border); color: var(--text); }
+  .dialog-actions .primary { background: var(--accent); color: #fff; }
+</style>
+</head>
+<body data-mode="focus">
+
+<header>
+  <h1>🍅 讀書番茄鐘</h1>
+  <div class="header-actions">
+    <button class="icon-btn" id="themeBtn"></button>
+    <button class="icon-btn" id="openSettings">⚙ 設定</button>
+  </div>
+</header>
+
+<main>
+  <!-- 左欄:計時器 + 科目管理 -->
+  <section>
+    <div class="card">
+      <div class="mode-tabs" id="modeTabs">
+        <button data-mode="focus">專注</button>
+        <button data-mode="short">短休息</button>
+        <button data-mode="long">長休息</button>
+      </div>
+
+      <div class="ring-wrap">
+        <svg width="240" height="240" viewBox="0 0 240 240">
+          <circle class="ring-bg" cx="120" cy="120" r="108" fill="none" stroke-width="10"/>
+          <circle class="ring-fg" id="ring" cx="120" cy="120" r="108" fill="none" stroke-width="10" stroke-linecap="round"/>
+        </svg>
+        <div class="time">
+          <div class="digits" id="digits">25:00</div>
+          <div class="label" id="modeLabel">專注</div>
+        </div>
+      </div>
+
+      <div class="cycle-dots" id="cycleDots" title="每 4 輪專注後進入長休息"></div>
+
+      <div class="subject-pick">
+        <label for="subjectSelect">科目</label>
+        <select id="subjectSelect"></select>
+      </div>
+
+      <div class="controls">
+        <button class="primary" id="startBtn">開始</button>
+        <button id="resetBtn">重設</button>
+        <button id="skipBtn">跳過</button>
+      </div>
+      <p class="hint" id="hint" aria-live="polite"></p>
+    </div>
+
+    <div class="card">
+      <h2>科目管理</h2>
+      <ul class="subject-list" id="subjectList"></ul>
+      <form class="add-form" id="addForm">
+        <input type="text" id="newName" placeholder="新增科目,例如:資料結構" maxlength="20">
+        <input type="color" id="newColor" title="科目顏色">
+        <button type="submit">新增</button>
+      </form>
+      <p class="error" id="addError"></p>
+    </div>
+  </section>
+
+  <!-- 右欄:統計 -->
+  <section>
+    <div class="card">
+      <h2>今日統計</h2>
+      <div class="today-total" id="todayTotal"></div>
+      <div id="todayBars"></div>
+    </div>
+    <div class="card">
+      <h2>近 7 天</h2>
+      <div class="week-chart" id="weekChart"></div>
+      <div class="legend" id="legend"></div>
+    </div>
+    <div class="card">
+      <h2>讀書紀錄</h2>
+      <ul class="record-list" id="recordList"></ul>
+    </div>
+  </section>
+</main>
+
+<dialog id="settingsDialog">
+  <h2>時間設定(分鐘)</h2>
+  <form id="settingsForm" method="dialog" novalidate>
+    <div class="setting-row"><label for="setFocus">專注</label><input type="number" id="setFocus" min="1" max="90" step="1"></div>
+    <div class="setting-row"><label for="setShort">短休息</label><input type="number" id="setShort" min="1" max="90" step="1"></div>
+    <div class="setting-row"><label for="setLong">長休息</label><input type="number" id="setLong" min="1" max="90" step="1"></div>
+    <p class="error" id="settingsError"></p>
+    <div class="dialog-actions">
+      <button type="button" id="cancelSettings">取消</button>
+      <button type="submit" class="primary">儲存</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+// ====================================================================
+//  1. 資料保存(localStorage)
+//     所有讀寫都包在 try/catch:隱私模式下 localStorage 可能丟錯,
+//     那時網頁照樣能用,只是不保存。
+// ====================================================================
+const STORE_KEY = 'pomodoro-tracker-v1';
+
+function loadData() {
+  const fallback = {
+    settings: { focus: 25, short: 5, long: 15 },
+    subjects: [],          // { id, name, color }
+    records: [],           // { id, date: 'YYYY-MM-DD', time: 'HH:MM', subjectId, minutes }
+    selectedSubjectId: null,
+    theme: 'auto'          // 'auto' | 'light' | 'dark'
+  };
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (!raw) return fallback;
+    return { ...fallback, ...JSON.parse(raw) };
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function saveData() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); } catch (e) { /* 無法保存就算了 */ }
+}
+
+const data = loadData();
+
+// ====================================================================
+//  2. 小工具
+// ====================================================================
+const $ = id => document.getElementById(id);
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const pad = n => String(n).padStart(2, '0');
+
+// 用「本地時間」產生日期字串,不用 toISOString(那是 UTC,台灣早上 8 點前會算成前一天)
+function dateKey(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+
+function fmtMinutes(m) {
+  if (m < 60) return `${m} 分`;
+  const h = Math.floor(m / 60), r = m % 60;
+  return r ? `${h} 小時 ${r} 分` : `${h} 小時`;
+}
+
+const MODE_NAME = { focus: '專注', short: '短休息', long: '長休息' };
+const PALETTE = ['#e07a5f', '#3d85c6', '#81b29a', '#f2cc8f', '#9b5de5', '#f15bb5', '#00bbf9', '#6c757d'];
+const DELETED = { name: '已刪除科目', color: 'var(--deleted)' };
+
+// ====================================================================
+//  3. 計時器狀態
+//     關鍵設計:不靠「每秒減 1」計時,而是記下「預計結束的時間戳 endAt」,
+//     每次更新畫面時用 endAt - Date.now() 算剩餘時間。
+//     原因:瀏覽器會把背景分頁的 setInterval 降速,每秒減 1 會越跑越慢。
+// ====================================================================
+const timer = {
+  mode: 'focus',
+  durationMs: data.settings.focus * 60000,
+  remainingMs: data.settings.focus * 60000,
+  endAt: null,      // 執行中才有值
+  running: false,
+  handle: null,
+  focusCount: 0     // 本次開網頁後完成的專注輪數,用來決定何時長休息
+};
+
+// 「進行中」= 已經開始過、還沒結束(含暫停)
+const inProgress = () => timer.running || timer.remainingMs < timer.durationMs;
+
+function currentRemaining() {
+  return timer.running ? Math.max(0, timer.endAt - Date.now()) : timer.remainingMs;
+}
+
+function setMode(mode) {
+  timer.mode = mode;
+  timer.durationMs = data.settings[mode] * 60000;
+  timer.remainingMs = timer.durationMs;
+  timer.endAt = null;
+  document.body.dataset.mode = mode;
+  render();
+}
+
+function start() {
+  if (timer.mode === 'focus' && !currentSubject()) return;
+  ensureAudio();
+  askNotificationPermission();
+  timer.endAt = Date.now() + timer.remainingMs;
+  timer.running = true;
+  timer.handle = setInterval(tick, 250);
+  render();
+}
+
+function pause() {
+  timer.remainingMs = currentRemaining();
+  timer.running = false;
+  timer.endAt = null;
+  clearInterval(timer.handle);
+  render();
+}
+
+function stopInterval() {
+  if (timer.running) pause();
+}
+
+function tick() {
+  if (currentRemaining() <= 0) complete();
+  else renderTime();
+}
+
+// 專注中途中斷(重設/跳過/切換模式):滿 1 分鐘的部分照實記錄
+function abandonCurrent() {
+  stopInterval();
+  if (timer.mode !== 'focus') return;
+  const minutes = Math.floor((timer.durationMs - timer.remainingMs) / 60000);
+  if (minutes >= 1) {
+    addRecord(minutes);
+    setHint(`已中斷,記錄 ${minutes} 分鐘到「${currentSubject().name}」`);
+  }
+}
+
+function nextBreakMode() {
+  return timer.focusCount > 0 && timer.focusCount % 4 === 0 ? 'long' : 'short';
+}
+
+function complete() {
+  clearInterval(timer.handle);
+  timer.running = false;
+  timer.remainingMs = 0;
+  beep();
+
+  if (timer.mode === 'focus') {
+    const minutes = Math.round(timer.durationMs / 60000);
+    const subj = currentSubject();
+    addRecord(minutes);
+    timer.focusCount++;
+    const next = nextBreakMode();
+    notify('專注完成!', `「${subj.name}」+${minutes} 分鐘,接下來${MODE_NAME[next]}。`);
+    setMode(next);
+    setHint(`完成一輪專注,記錄 ${minutes} 分鐘到「${subj.name}」🎉`);
+  } else {
+    notify('休息結束', '準備開始下一輪專注吧!');
+    setMode('focus');
+    setHint('休息結束,按「開始」進入下一輪專注');
+  }
+}
+
+function reset() {
+  abandonCurrent();
+  setMode(timer.mode);
+}
+
+function skip() {
+  abandonCurrent();
+  setMode(timer.mode === 'focus' ? nextBreakMode() : 'focus');
+}
+
+// ====================================================================
+//  4. 提示音與通知
+// ====================================================================
+let audioCtx = null;
+function ensureAudio() {
+  // 瀏覽器規定:聲音必須在使用者操作(點擊)後才能啟動,所以在按「開始」時建立
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch (e) { audioCtx = null; }
+}
+
+function beep() {
+  if (!audioCtx) return;
+  // 三聲短嗶:每聲是一個 880Hz 的正弦波,音量快速淡出
+  for (let i = 0; i < 3; i++) {
+    const t = audioCtx.currentTime + i * 0.35;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.25, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.3);
+  }
+}
+
+function askNotificationPermission() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+}
+
+function notify(title, body) {
+  try {
+    if ('Notification' in window && Notification.permission === 'granted') new Notification(title, { body });
+  } catch (e) { /* 部分瀏覽器(如手機)不支援 new Notification */ }
+}
+
+// ====================================================================
+//  5. 科目與紀錄
+// ====================================================================
+function currentSubject() {
+  return data.subjects.find(s => s.id === data.selectedSubjectId) || null;
+}
+
+function addSubject(name, color) {
+  name = name.trim();
+  if (!name) return '科目名稱不可空白';
+  if (data.subjects.some(s => s.name === name)) return `「${name}」已經存在`;
+  const s = { id: uid(), name, color };
+  data.subjects.push(s);
+  if (!currentSubject()) data.selectedSubjectId = s.id;
+  saveData();
+  return null;
+}
+
+function deleteSubject(id) {
+  const s = data.subjects.find(x => x.id === id);
+  if (!s) return;
+  if (!confirm(`確定刪除「${s.name}」?\n過去的讀書紀錄會保留,在統計中顯示為「已刪除科目」。`)) return;
+  data.subjects = data.subjects.filter(x => x.id !== id);
+  if (data.selectedSubjectId === id) data.selectedSubjectId = data.subjects[0]?.id ?? null;
+  saveData();
+  render();
+}
+
+function addRecord(minutes) {
+  const now = new Date();
+  data.records.push({
+    id: uid(), date: dateKey(now), time: `${pad(now.getHours())}:${pad(now.getMinutes())}`,
+    subjectId: data.selectedSubjectId, minutes
+  });
+  saveData();
+  renderStats();
+}
+
+function deleteRecord(id) {
+  const r = data.records.find(x => x.id === id);
+  if (!r) return;
+  const s = data.subjects.find(x => x.id === r.subjectId);
+  if (!confirm(`確定刪除這筆紀錄?\n${r.date} ${s ? s.name : DELETED.name} ${fmtMinutes(r.minutes)}`)) return;
+  data.records = data.records.filter(x => x.id !== id);
+  saveData();
+  renderStats();
+}
+
+// 把某天的紀錄依科目加總;找不到的科目(已刪除)合併成一類
+function sumByDay(day) {
+  const map = new Map();
+  for (const r of data.records) {
+    if (r.date !== day) continue;
+    const s = data.subjects.find(x => x.id === r.subjectId);
+    const key = s ? s.id : '__deleted';
+    const info = s ? { name: s.name, color: s.color } : DELETED;
+    if (!map.has(key)) map.set(key, { ...info, minutes: 0 });
+    map.get(key).minutes += r.minutes;
+  }
+  return [...map.values()].sort((a, b) => b.minutes - a.minutes);
+}
+
+// ====================================================================
+//  6. 畫面更新
+// ====================================================================
+const RING_C = 2 * Math.PI * 108; // 圓周長,用來控制進度環
+$('ring').style.strokeDasharray = RING_C;
+
+function setHint(text) { $('hint').textContent = text; }
+
+function renderTime() {
+  const ms = currentRemaining();
+  const totalSec = Math.ceil(ms / 1000);
+  const text = `${pad(Math.floor(totalSec / 60))}:${pad(totalSec % 60)}`;
+  $('digits').textContent = text;
+  $('ring').style.strokeDashoffset = RING_C * (1 - ms / timer.durationMs);
+  document.title = timer.running ? `${text} ${MODE_NAME[timer.mode]} · 讀書番茄鐘` : '讀書番茄鐘';
+}
+
+function renderControls() {
+  document.querySelectorAll('#modeTabs button').forEach(b =>
+    b.classList.toggle('active', b.dataset.mode === timer.mode));
+  $('modeLabel').textContent = MODE_NAME[timer.mode];
+
+  const needSubject = timer.mode === 'focus' && !currentSubject();
+  $('startBtn').textContent = timer.running ? '暫停' : (inProgress() ? '繼續' : '開始');
+  $('startBtn').disabled = needSubject && !timer.running;
+  if (needSubject) setHint(data.subjects.length ? '請先選擇科目' : '請先在下方新增一個科目');
+  else if ($('hint').textContent.startsWith('請先')) setHint('');
+
+  // 專注進行中鎖住科目選單,避免時數記到別科
+  $('subjectSelect').disabled = timer.mode === 'focus' && inProgress();
+
+  const filled = timer.focusCount % 4 === 0 && timer.focusCount > 0 && timer.mode === 'long' ? 4 : timer.focusCount % 4;
+  $('cycleDots').innerHTML = '';
+  for (let i = 0; i < 4; i++) {
+    const d = document.createElement('span');
+    if (i < filled) d.className = 'done';
+    $('cycleDots').appendChild(d);
+  }
+}
+
+function renderSubjects() {
+  const sel = $('subjectSelect');
+  sel.innerHTML = '';
+  if (!data.subjects.length) {
+    sel.add(new Option('(尚無科目)', ''));
+  } else {
+    for (const s of data.subjects) sel.add(new Option(s.name, s.id));
+    sel.value = data.selectedSubjectId ?? '';
+  }
+
+  const list = $('subjectList');
+  list.innerHTML = '';
+  if (!data.subjects.length) {
+    list.innerHTML = '<li class="empty" style="border:none">還沒有科目,從下面新增吧</li>';
+  }
+  for (const s of data.subjects) {
+    const li = document.createElement('li');
+    const dot = document.createElement('span');
+    dot.className = 'dot'; dot.style.background = s.color;
+    const name = document.createElement('span');
+    name.textContent = s.name;            // 用 textContent 而非 innerHTML,避免使用者輸入被當成 HTML 執行
+    const del = document.createElement('button');
+    del.textContent = '×'; del.title = `刪除「${s.name}」`;
+    del.onclick = () => deleteSubject(s.id);
+    li.append(dot, name, del);
+    list.appendChild(li);
+  }
+  $('newColor').value = PALETTE[data.subjects.length % PALETTE.length];
+}
+
+function renderStats() {
+  // --- 今日 ---
+  const today = dateKey(new Date());
+  const todayItems = sumByDay(today);
+  const total = todayItems.reduce((a, b) => a + b.minutes, 0);
+  $('todayTotal').innerHTML = '';
+  $('todayTotal').append(fmtMinutes(total));
+  const small = document.createElement('small');
+  small.textContent = ' 今日讀書時間';
+  $('todayTotal').appendChild(small);
+
+  const bars = $('todayBars');
+  bars.innerHTML = '';
+  if (!todayItems.length) bars.innerHTML = '<p class="empty">今天還沒有紀錄,完成一輪專注就會出現在這裡。</p>';
+  const max = Math.max(1, ...todayItems.map(i => i.minutes));
+  for (const it of todayItems) {
+    const row = document.createElement('div');
+    row.className = 'hbar-row';
+    row.innerHTML = `<span class="name"><span class="dot"></span><span></span></span>
+      <div class="hbar-track"><div class="hbar-fill"></div></div><span class="val"></span>`;
+    row.querySelector('.dot').style.background = it.color;
+    row.querySelector('.name span:last-child').textContent = it.name;
+    row.querySelector('.hbar-fill').style.cssText = `width:${it.minutes / max * 100}%;background:${it.color}`;
+    row.querySelector('.val').textContent = fmtMinutes(it.minutes);
+    bars.appendChild(row);
+  }
+
+  // --- 近 7 天 ---
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);   // setDate 會自動處理跨月,例如 10/1 往前一天是 9/30
+    const items = sumByDay(dateKey(d));
+    days.push({ d, items, total: items.reduce((a, b) => a + b.minutes, 0), isToday: i === 0 });
+  }
+  const weekMax = Math.max(1, ...days.map(x => x.total));
+  const WEEK = '日一二三四五六';
+  const chart = $('weekChart');
+  chart.innerHTML = '';
+  const legendMap = new Map();
+  for (const day of days) {
+    const col = document.createElement('div');
+    col.className = 'week-col' + (day.isToday ? ' today' : '');
+    col.innerHTML = `<div class="total"></div><div class="bar-area"><div class="stack"></div></div><div class="day"></div>`;
+    col.querySelector('.total').textContent = day.total ? fmtMinutes(day.total) : '';
+    col.querySelector('.day').innerHTML = `${day.d.getMonth() + 1}/${day.d.getDate()}<br>${day.isToday ? '今天' : '週' + WEEK[day.d.getDay()]}`;
+    const stack = col.querySelector('.stack');
+    stack.style.height = `${day.total / weekMax * 100}%`;
+    for (const it of day.items) {
+      const seg = document.createElement('div');
+      seg.className = 'seg';
+      seg.style.cssText = `height:${it.minutes / day.total * 100}%;background:${it.color}`;
+      seg.title = `${it.name}:${fmtMinutes(it.minutes)}`;
+      stack.appendChild(seg);
+      legendMap.set(it.name, it.color);
+    }
+    chart.appendChild(col);
+  }
+
+  const legend = $('legend');
+  legend.innerHTML = '';
+  if (!legendMap.size) legend.innerHTML = '<span>近 7 天還沒有紀錄</span>';
+  for (const [name, color] of legendMap) {
+    const s = document.createElement('span');
+    s.innerHTML = '<span class="dot"></span><span></span>';
+    s.firstChild.style.background = color;
+    s.lastChild.textContent = name;
+    legend.appendChild(s);
+  }
+
+  renderRecords();
+}
+
+function renderRecords() {
+  const list = $('recordList');
+  list.innerHTML = '';
+  if (!data.records.length) {
+    list.innerHTML = '<li class="empty" style="display:block;border:none">還沒有任何紀錄</li>';
+    return;
+  }
+  // 紀錄是依時間順序 push 進陣列的,所以反過來就是「最新在最上面」。
+  // 用 slice() 複製一份再 reverse,避免改到原本的 data.records。
+  for (const r of data.records.slice().reverse()) {
+    const s = data.subjects.find(x => x.id === r.subjectId);
+    const info = s || DELETED;
+    const [, m, d] = r.date.split('-');
+    const li = document.createElement('li');
+    li.innerHTML = `<span class="when"></span><span class="name"><span class="dot"></span><span></span></span>
+      <span class="mins"></span><button title="刪除這筆紀錄">×</button>`;
+    li.querySelector('.when').textContent = `${+m}/${+d} ${r.time || ''}`;   // 第一版的紀錄沒有 time 欄位
+    li.querySelector('.dot').style.background = info.color;
+    li.querySelector('.name span:last-child').textContent = info.name;
+    li.querySelector('.mins').textContent = fmtMinutes(r.minutes);
+    li.querySelector('button').onclick = () => deleteRecord(r.id);
+    list.appendChild(li);
+  }
+}
+
+// 主題:'auto' 時拿掉 data-theme 屬性,交給 CSS 的 prefers-color-scheme 判斷
+const THEME_LABEL = { auto: '🌓 自動', light: '☀️ 淺色', dark: '🌙 深色' };
+function applyTheme() {
+  if (data.theme === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.dataset.theme = data.theme;
+  $('themeBtn').textContent = THEME_LABEL[data.theme];
+  $('themeBtn').title = '切換主題(自動 → 淺色 → 深色)';
+}
+
+function render() {
+  renderTime();
+  renderSubjects();
+  renderControls();
+  renderStats();
+}
+
+// ====================================================================
+//  7. 事件綁定
+// ====================================================================
+$('startBtn').onclick = () => timer.running ? pause() : start();
+$('resetBtn').onclick = reset;
+
+$('themeBtn').onclick = () => {
+  const order = ['auto', 'light', 'dark'];
+  data.theme = order[(order.indexOf(data.theme) + 1) % order.length];
+  saveData();
+  applyTheme();
+};
+$('skipBtn').onclick = skip;
+
+$('modeTabs').onclick = e => {
+  const mode = e.target.dataset.mode;
+  if (!mode || mode === timer.mode) return;
+  if (inProgress() && !confirm('目前的計時會被中斷,確定切換?')) return;
+  abandonCurrent();
+  setMode(mode);
+};
+
+$('subjectSelect').onchange = e => {
+  data.selectedSubjectId = e.target.value || null;
+  saveData();
+  renderControls();
+};
+
+$('addForm').onsubmit = e => {
+  e.preventDefault();
+  const err = addSubject($('newName').value, $('newColor').value);
+  $('addError').textContent = err || '';
+  if (!err) { $('newName').value = ''; render(); }
+};
+
+// 設定視窗
+$('openSettings').onclick = () => {
+  $('setFocus').value = data.settings.focus;
+  $('setShort').value = data.settings.short;
+  $('setLong').value = data.settings.long;
+  $('settingsError').textContent = '';
+  $('settingsDialog').showModal();
+};
+$('cancelSettings').onclick = () => $('settingsDialog').close();
+$('settingsForm').onsubmit = e => {
+  e.preventDefault();
+  const vals = { focus: +$('setFocus').value, short: +$('setShort').value, long: +$('setLong').value };
+  const bad = Object.entries(vals).find(([, v]) => !Number.isInteger(v) || v < 1 || v > 90);
+  if (bad) {
+    $('settingsError').textContent = `「${MODE_NAME[bad[0]]}」必須是 1–90 的整數`;
+    return;
+  }
+  data.settings = vals;
+  saveData();
+  $('settingsDialog').close();
+  // 沒在計時就立刻套用;計時中則等下一個時段
+  if (!inProgress()) setMode(timer.mode);
+  else setHint('新設定將從下一個時段開始生效');
+};
+
+// 計時中關閉分頁 → 跳出瀏覽器的離開確認
+window.addEventListener('beforeunload', e => {
+  if (timer.running) { e.preventDefault(); e.returnValue = ''; }
+});
+
+// 跨過午夜時,讓「今天」自動更新(每分鐘重畫一次統計)
+setInterval(renderStats, 60000);
+
+applyTheme();
+setMode('focus');
+</script>
+</body>
+</html>
